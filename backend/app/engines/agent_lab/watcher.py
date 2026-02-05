@@ -67,20 +67,24 @@ class KillSwitch:
             container.start()
 
         self.logger.info("Watcher attached to Neural link...")
+        logs_captured = []
         
         try:
             # Stream logs
             for line in container.logs(stream=True, follow=True):
                 log_line = line.decode('utf-8').strip()
+                logs_captured.append(log_line)
                 print(f"[Rogue Agent]: {log_line}")
                 
                 # Analyze Policy
                 for trigger in self.triggers:
                     if trigger in log_line.lower():
-                        return self.trigger_containment(container, f"Detected disallowed token: '{trigger}'")
+                        report = self.trigger_containment(container, f"Detected disallowed token: '{trigger}'")
+                        report["logs"] = logs_captured # Attach full log history
+                        return report
                         
         except Exception as e:
-            return {"status": "error", "detail": str(e)}
+            return {"status": "error", "detail": str(e), "logs": logs_captured}
 
     def reset_lab(self):
         container = self.get_container()
