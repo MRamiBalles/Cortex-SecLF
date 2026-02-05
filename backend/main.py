@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.archive import router as archive_router
 from app.api.gaps import router as gaps_router
 from app.api.lab import router as lab_router
+from app.api.neuro import router as neuro_router
 
 app = FastAPI(
     title="Cortex-Sec Local Forge",
@@ -30,6 +31,7 @@ app.add_middleware(
 app.include_router(archive_router)
 app.include_router(gaps_router)
 app.include_router(lab_router)
+app.include_router(neuro_router)
 
 @app.get("/health")
 async def health_check():
