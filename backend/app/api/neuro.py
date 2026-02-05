@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from ..engines.neuro_sim.generator import neuro_gen
 from ..engines.neuro_sim.ledger import consent_ledger
+from ..engines.neuro_sim.zkp_verify import zkp_verifier
 
 router = APIRouter(prefix="/neuro", tags=["Neuro-Rights"])
 
