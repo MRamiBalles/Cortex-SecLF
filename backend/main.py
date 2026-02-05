@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api.archive import router as archive_router
 
 app = FastAPI(
     title="Cortex-Sec Local Forge",
@@ -23,8 +24,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# App Routers
+app.include_router(archive_router)
+
 @app.get("/health")
 async def health_check():
     return {"status": "operational", "system": "Cortex-Sec Local Forge"}
-
-# TODO: Include routers for RAG, Code Judge, etc.

@@ -12,14 +12,12 @@ services:
     networks:
       - cslf-net
     restart: unless-stopped
-    # Enable for GPU support if available (requires nvidia-container-toolkit)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:11434/api/tags" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
   # ---------------------------------------------
   # Vector Database: ChromaDB
@@ -36,6 +34,11 @@ services:
     environment:
       - IS_PERSISTENT=TRUE
       - PERSIST_DIRECTORY=/chroma/chroma
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ---------------------------------------------
   # Backend: FastAPI
@@ -49,14 +52,16 @@ services:
       - ../backend:/app
       - ../data:/data
     ports:
-      - "8008:8000"  # Mapped to 8008 to avoid conflict with Chroma's 8000
+      - "8008:8000"
     environment:
       - OLLAMA_BASE_URL=http://ai-engine:11434
       - CHROMA_DB_HOST=vector-db
       - CHROMA_DB_PORT=8000
     depends_on:
-      - ai-engine
-      - vector-db
+      ai-engine:
+        condition: service_healthy
+      vector-db:
+        condition: service_healthy
     networks:
       - cslf-net
 
@@ -70,13 +75,14 @@ services:
     container_name: cslf-frontend
     volumes:
       - ../frontend:/app
-      - /app/node_modules # Prevent host node_modules from overwriting container's
+      - /app/node_modules
     ports:
       - "3000:3000"
     environment:
       - API_BASE_URL=http://backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     networks:
       - cslf-net
 
