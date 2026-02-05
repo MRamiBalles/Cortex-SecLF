@@ -22,6 +22,8 @@ export default function NeuroDashboard() {
     const [ledger, setLedger] = useState<any[]>([])
     const [blockedCount, setBlockedCount] = useState(0)
     const [isPolling, setIsPolling] = useState(true)
+    const [sovereignMode, setSovereignMode] = useState(true) // Default to v3.0
+    const [zkpStatus, setZkpStatus] = useState<string | null>(null)
 
     // SVG Polyline config
     const maxPoints = 100
@@ -33,11 +35,47 @@ export default function NeuroDashboard() {
 
         const interval = setInterval(async () => {
             try {
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/stream`)
-                const data = await res.json()
-                const p = data.data as NeuroPacket
+                let res;
+                if (sovereignMode) {
+                    // v3.0: GENERATE ZKP PROOF (Mock)
+                    const proof = {
+                        id: `π_${Math.random().toString(36).substr(2, 9)}`,
+                        metadata: "CORTEX_ZKP_v3",
+                        timestamp: Date.now() / 1000
+                    }
+                    const public_signals = [75] // Threshold constant
 
-                setPacket(p)
+                    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/stream`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            client_id: "agent-nexus-prover",
+                            proof,
+                            public_signals
+                        })
+                    })
+                } else {
+                    // v2.0: LEGACY GET (Exposes Identity to check Consent)
+                    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/stream?client_id=agent-legacy`)
+                }
+
+                const data = await res.json()
+
+                if (data.mode === "SOVEREIGN_ZKP") {
+                    setZkpStatus(data.zkp_status)
+                    // Synthesize a packet for the visualizer from redacted data
+                    setPacket({
+                        timestamp: Date.now(),
+                        raw_eeg: { "AF7": 0 }, // Redacted
+                        psychography: { inferred_state: data.inference, privacy_risk: "ZERO_KNOWLEDGE_VERIFIED" },
+                        status: "SOVEREIGN_ZKP"
+                    })
+                } else {
+                    setZkpStatus(null)
+                    setPacket(data.data)
+                }
+
+                const p = data.mode === "SOVEREIGN_ZKP" ? { status: "SOVEREIGN_ZKP", raw_eeg: { "AF7": 50 } } : data.data as NeuroPacket
 
                 // Update Visualizer Data (Simulate rolling window)
                 // If encrypted, show noise
@@ -115,14 +153,22 @@ export default function NeuroDashboard() {
                             <Brain size={24} /> BIOMETRIC PSYCHOGRAPHY MONITOR
                         </CardTitle>
                         <div className="flex items-center gap-4">
-                            <span className={`text-xs font-mono font-bold ${consent ? 'text-red-500 animate-pulse' : 'text-green-500'}`}>
-                                {consent ? "⚠ DATA EXPOSED" : "🔒 PRIVACY SHIELD ACTIVE"}
+                            <div className="flex items-center gap-2 bg-neutral-800 p-1 rounded px-2">
+                                <span className="text-[10px] font-mono text-neutral-500 uppercase">Sovereign Mode (ZKP):</span>
+                                <Switch
+                                    checked={sovereignMode}
+                                    onCheckedChange={setSovereignMode}
+                                />
+                            </div>
+                            <span className={`text-xs font-mono font-bold ${consent && !sovereignMode ? 'text-red-500 animate-pulse' : 'text-green-500'}`}>
+                                {sovereignMode ? "✨ MATHEMATICAL SOVEREIGNTY" : (consent ? "⚠ DATA EXPOSED" : "🔒 PRIVACY SHIELD ACTIVE")}
                             </span>
                             <div className="flex items-center gap-2">
                                 <span className="text-sm text-neutral-400">CONSENT:</span>
                                 <Button
                                     variant={consent ? "destructive" : "default"}
-                                    className={`w-32 font-bold transition-all duration-300 ${!consent ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
+                                    disabled={sovereignMode} // v3.0 doesn't need manual consent toggle for raw data as it's never sent
+                                    className={`w-32 font-bold transition-all duration-300 ${!consent ? 'bg-emerald-600 hover:bg-emerald-700' : ''} ${sovereignMode ? 'opacity-50 grayscale' : ''}`}
                                     onClick={toggleConsent}
                                 >
                                     {consent ? <Unlock size={16} className="mr-2" /> : <Lock size={16} className="mr-2" />}
@@ -142,6 +188,15 @@ export default function NeuroDashboard() {
                                 <div className="text-4xl md:text-6xl font-black text-cyan-500 tracking-tighter drop-shadow-[0_0_15px_rgba(6,182,212,0.5)]">
                                     {packet.psychography.inferred_state}
                                 </div>
+                            ) : packet?.status === "SOVEREIGN_ZKP" ? (
+                                <div className="space-y-2">
+                                    <div className="text-4xl md:text-5xl font-black text-emerald-500 tracking-tighter">
+                                        VERIFIED BY PROOF
+                                    </div>
+                                    <div className="text-xs font-mono text-emerald-400 bg-emerald-950/40 p-1 px-3 rounded-full inline-block border border-emerald-800">
+                                        π_PROOF: {zkpStatus}
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="text-4xl md:text-6xl font-bold text-neutral-700 font-mono tracking-widest blur-[2px]">
                                     ENCRYPTED
@@ -152,7 +207,9 @@ export default function NeuroDashboard() {
                             <div className="mt-4 font-mono text-xs bg-black/50 p-2 rounded border border-neutral-800 inline-block text-neutral-400">
                                 {packet?.status === "EXPOSED" ?
                                     `RISK LEVEL: ${packet.psychography.privacy_risk}` :
-                                    `HASH: ${packet?.psychography.inferred_state.substring(0, 24)}...`
+                                    (packet?.status === "SOVEREIGN_ZKP" ?
+                                        `ZERO KNOWLEDGE: ${packet.psychography.privacy_risk}` :
+                                        `HASH: ${packet?.psychography.inferred_state.substring(0, 24)}...`)
                                 }
                             </div>
                         </div>
