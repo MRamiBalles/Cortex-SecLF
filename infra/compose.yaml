@@ -1,0 +1,88 @@
+services:
+  # ---------------------------------------------
+  # AI Engine: Ollama (Headless)
+  # ---------------------------------------------
+  ai-engine:
+    image: ollama/ollama:latest
+    container_name: cslf-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - cslf-net
+    restart: unless-stopped
+    # Enable for GPU support if available (requires nvidia-container-toolkit)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------
+  # Vector Database: ChromaDB
+  # ---------------------------------------------
+  vector-db:
+    image: chromadb/chroma:latest
+    container_name: cslf-chromadb
+    volumes:
+      - ../data/vector_db:/chroma/chroma
+    ports:
+      - "8000:8000"
+    networks:
+      - cslf-net
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+
+  # ---------------------------------------------
+  # Backend: FastAPI
+  # ---------------------------------------------
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../infra/docker/backend.Dockerfile
+    container_name: cslf-backend
+    volumes:
+      - ../backend:/app
+      - ../data:/data
+    ports:
+      - "8008:8000"  # Mapped to 8008 to avoid conflict with Chroma's 8000
+    environment:
+      - OLLAMA_BASE_URL=http://ai-engine:11434
+      - CHROMA_DB_HOST=vector-db
+      - CHROMA_DB_PORT=8000
+    depends_on:
+      - ai-engine
+      - vector-db
+    networks:
+      - cslf-net
+
+  # ---------------------------------------------
+  # Frontend: Next.js
+  # ---------------------------------------------
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../infra/docker/frontend.Dockerfile
+    container_name: cslf-frontend
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules # Prevent host node_modules from overwriting container's
+    ports:
+      - "3000:3000"
+    environment:
+      - API_BASE_URL=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - cslf-net
+
+networks:
+  cslf-net:
+    driver: bridge
+
+volumes:
+  ollama_data:
