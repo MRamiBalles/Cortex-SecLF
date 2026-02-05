@@ -76,14 +76,25 @@ class HiveOrchestrator:
                 )
                 return response.content[0].text
             
-            # Fallback/Reviewer: Local Ollama
+            if agent == "reviewer" and self.openai_client:
+                 response = self.openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                    response_format={"type": "json_object"}
+                )
+                 return response.choices[0].message.content
+
+            # Fallback: Local Ollama
             response = ollama.chat(
                 model='llama3',
                 messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
             )
             return response['message']['content']
         except Exception as e:
-            self.logger.error(f"LLM Call Failed for {agent}: {e}")
+            self.logger.warning(f"LLM Call Primary Fallback Failed for {agent}: {e}")
+            # Final Safety Net for Reviewer if even OpenAI failed or agent is reviewer
+            if agent == "reviewer":
+                return json.dumps({"score": 5, "verdict": "REVISE", "critique": f"Reviewer communication failure: {e}"})
             return json.dumps({"error": str(e), "verdict": "REJECT", "code": "print('LLM_ERROR')"})
 
     def initialize_project(self, topic: str):

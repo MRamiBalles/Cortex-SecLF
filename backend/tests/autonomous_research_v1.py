@@ -10,7 +10,11 @@ from app.engines.scientist.hive.orchestrator import hive_orchestrator
 def run_autonomous_research():
     print("--- CORTEX-SEC AUTONOMOUS RESEARCH: V3.3 SYNAPSE ---")
     
-    topic = "Attribute Inference Attacks against encrypted EEG BCI protocols"
+    topic = (
+        "Investiga vectores de ataque teóricos contra el protocolo de transmisión de datos del NeuroDashboard. "
+        "Específicamente, ¿es posible realizar un ataque de inferencia de atributos (Attribute Inference Attack) "
+        "sobre los datos EEG cifrados para deducir el estado emocional sin descifrar el payload? Propón una PoC en Python."
+    )
     
     print(f"TARGET TOPIC: {topic}")
     print("STATUS: Initiating Synthetic Hive...")
@@ -39,7 +43,7 @@ def run_autonomous_research():
     if realization['status'] == "COMPILED":
         print(f"Verification: PASS (Exit Code 0)")
         # Show first few lines of code
-        code_preview = realization['code'].split('\n')[:5]
+        code_preview = realization['content'].split('\n')[:5]
         print("Code Preview:")
         for line in code_preview: print(f"  {line}")
 
