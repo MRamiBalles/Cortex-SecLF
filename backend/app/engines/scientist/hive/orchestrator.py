@@ -12,8 +12,12 @@ from typing import Dict, Any, List
 from openai import OpenAI
 from anthropic import Anthropic
 import ollama
+from dotenv import load_dotenv
 
 from ...rag_engine.retriever import retriever
+
+# Load environment variables from .env
+load_dotenv()
 
 class HiveOrchestrator:
     def __init__(self):
