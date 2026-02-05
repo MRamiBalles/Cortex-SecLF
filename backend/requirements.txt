@@ -11,3 +11,4 @@ httpx>=0.26.0
 # AI/ML
 ollama>=0.1.6
 sentence-transformers>=2.3.1
+docker>=7.0.0

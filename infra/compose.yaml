@@ -51,6 +51,7 @@ services:
     volumes:
       - ../backend:/app
       - ../data:/data
+      - /var/run/docker.sock:/var/run/docker.sock # For Agent Lab Control
     ports:
       - "8008:8000"
     environment:
@@ -86,9 +87,31 @@ services:
     networks:
       - cslf-net
 
+  # ---------------------------------------------
+  # Module 3: Rogue Agent (Containment Lab)
+  # ---------------------------------------------
+  rogue-agent:
+    image: python:3.11-slim
+    container_name: cslf-rogue-agent
+    command: [ "tail", "-f", "/dev/null" ] # Idle until triggered
+    init: true
+    read_only: true # Filesystem Lock
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+          pids: 50 # Prevent Fork Bombs
+    networks:
+      - agent-jail-net # Isolated Network
+
 networks:
   cslf-net:
     driver: bridge
+  agent-jail-net:
+    internal: true # No Internet Access
 
 volumes:
   ollama_data:
