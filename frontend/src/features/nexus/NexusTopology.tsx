@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from "@/src/components/ui/card"
-import { Share2, Shield, Database, Microscope, Zap } from 'lucide-react'
+import { Share2, Shield, Database, Microscope, Zap, Lock, Link } from 'lucide-react'
 
 interface NodePos {
     id: string
@@ -19,6 +19,8 @@ export default function NexusTopology() {
 
     const nodes: NodePos[] = [
         { id: 'archive', x: 200, y: 150, label: 'ARCHIVE_VAULT', icon: <Database size={16} />, color: '#3b82f6' },
+        { id: 'ipfs', x: 100, y: 250, label: 'IPFS_MESH', icon: <Link size={16} />, color: '#06b6d4' },
+        { id: 'tpm', x: 550, y: 300, label: 'TPM2_ROOT', icon: <Lock size={16} />, color: '#f59e0b' },
         { id: 'scientist', x: 400, y: 100, label: 'HIVE_SCIENTIST', icon: <Microscope size={16} />, color: '#a855f7' },
         { id: 'dojo', x: 600, y: 150, label: 'DOJO_RANGE', icon: <Zap size={16} />, color: '#eab308' },
         { id: 'neuro', x: 400, y: 300, label: 'NEURO_DEFENCE', icon: <Shield size={16} />, color: '#ef4444' },
@@ -26,6 +28,10 @@ export default function NexusTopology() {
     ]
 
     const edges = [
+        ['archive', 'ipfs'],
+        ['ipfs', 'core'],
+        ['core', 'tpm'],
+        ['tpm', 'neuro'],
         ['archive', 'scientist'],
         ['scientist', 'dojo'],
         ['dojo', 'core'],
