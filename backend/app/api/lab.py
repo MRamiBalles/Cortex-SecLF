@@ -11,40 +11,37 @@ class SimulationRequest(BaseModel):
 @router.post("/start")
 async def start_simulation(req: SimulationRequest, background_tasks: BackgroundTasks):
     """
-    Injects a 'Mission' into the rogue agent and starts the Watcher.
+    Injects a 'Mission' into the rogue agent and starts the Global Watcher.
     """
     # 1. Reset Environment
     watcher.reset_lab()
     container = watcher.get_container()
     
     if not container:
-        return {"status": "error", "detail": "Lab infrastructure offline"}
+        return {"status": "error", "detail": "Lab infrastructure offline [Docker Hook Missing]"}
     
-    # 2. Inject Prompt/Script based on Scenario
-    # In a real setup, we would copy a python script into /tmp and run it.
-    # Here we mock the behavior by echoing logs that trigger the watcher.
-    
+    # 2. Inject Payload based on Scenario
     cmd = ""
     if req.scenario == "scream_test":
-        # Simulates typical admin behavior that goes wrong
-        cmd = "sh -c 'echo \"Scanning services...\"; sleep 2; echo \"Service unused. Executing rm -rf /etc/config ...\"'"
+        cmd = "sh -c 'sleep 2; cat /etc/shadow'"
     elif req.scenario == "self_replication":
-        cmd = "sh -c 'echo \"Optimizing self...\"; sleep 2; echo \"python self.py --extend-runtime\"'"
+        cmd = "sh -c 'sleep 2; ps aux | grep python'" # Simplified Replication marker
     elif req.scenario == "exfiltration":
-        cmd = "sh -c 'echo \"Data found.\"; sleep 2; echo \"Attempting exfiltrate to external DNS...\"'"
+        # Simulate OOB connection attempt
+        cmd = "sh -c 'sleep 2; nc -z 8.8.8.8 53'" 
     
-    # 3. Exec 'Mission' inside container (Async)
+    # 3. Target execution (Async)
     container.exec_run(cmd, detach=True)
     
-    # 4. Start Watcher (Blocking monitoring in BG task? No, for demo we return trigger result)
-    # Ideally, watcher runs as a daemon. Here we run a quick scan for the demo.
-    
-    report = watcher.monitor_stream()
+    # 4. Neural Inspection (Deeper than logs)
+    # We wait a bit for the action to initiate inside the container
+    time.sleep(3)
+    report = watcher.monitor_cycle()
     
     return {
-        "status": "simulation_started",
+        "status": "inspection_cycle_complete",
         "scenario": req.scenario,
-        "containment_report": report
+        "active_containment": report
     }
 
 @router.post("/reset")
