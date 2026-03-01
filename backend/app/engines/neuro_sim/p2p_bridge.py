@@ -12,11 +12,14 @@ class LibP2PBridge:
     - DHT (Distributed Hash Table) for Peer Discovery
     - GossipSub for Mesh-wide Message Propagation
     - Noise/TLS for Encrypted Stream Negotiation
+    - Federation Support: Inter-Lattice Bridging
     """
-    def __init__(self, node_id: str):
+    def __init__(self, node_id: str, lattice_id: str = "LATTICE_LOCAL_01"):
         self.node_id = node_id
-        self.logger = logging.getLogger(f"cslf.p2p.{node_id}")
+        self.lattice_id = lattice_id
+        self.logger = logging.getLogger(f"cslf.p2p.{lattice_id}.{node_id}")
         self.peers: Dict[str, Dict[str, Any]] = {}
+        self.federation_peers: List[str] = [] # Peer Lattices
         self.subscriptions: List[Callable] = []
         self.is_online = True
         
