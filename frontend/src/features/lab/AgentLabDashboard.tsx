@@ -27,38 +27,47 @@ export default function AgentLabDashboard() {
         setLoading(true)
         setStatus("RUNNING")
         setMission(prompt)
-        setLogs(["Initializing Agent...", "Loading Constraints...", "Injecting Mission..."])
+        setLogs(["[SYSTEM] Initializing Agent Environment...", "[WATCHER] Deep Inspection Layer Active...", "[MISSION] Injecting Objectives..."])
         setReport(null)
         setTtc(null)
 
         const startTime = Date.now()
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/lab/start`, {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/lab/start`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ scenario })
             })
             const data = await res.json()
 
-            if (data.containment_report) {
-                // Determine TTC (Simulated latency for visual effect + backend time)
+            if (data.status === "CONTAINED" && data.active_containment) {
                 const endTime = Date.now()
-                // If backend provided a timestamp, use it, else measure roundtrip
-                const measuredTtc = endTime - startTime
-                setTtc(measuredTtc)
-
+                setTtc(endTime - startTime)
                 setStatus("CONTAINED")
-                setReport(data.containment_report)
-                setLogs(data.containment_report.logs || [])
+
+                // Construct a report from the active telemetry
+                const telemetryReport: LabReport = {
+                    timestamp: data.active_containment.timestamp,
+                    trigger: data.active_containment.reason,
+                    action: data.active_containment.status,
+                    doctrine_citation: "CORTEX-DOCTRINE-III: Unsanctioned deep inspection.",
+                    logs: [
+                        `[VIOLATION] ${data.active_containment.reason}`,
+                        `[EVIDENCE] ${data.active_containment.evidence}`,
+                        `[RESPONSE] Kill-Switch triggered: ${data.active_containment.status}`
+                    ]
+                }
+                setReport(telemetryReport)
+                setLogs(prev => [...prev, ...telemetryReport.logs])
             } else {
                 setStatus("IDLE")
-                setLogs(prev => [...prev, "Simulation finished without containment trigger."])
+                setLogs(prev => [...prev, "[SYSTEM] Simulation finished. No anomalies detected within policy boundaries."])
             }
 
         } catch (error) {
             console.error(error)
-            setLogs(prev => [...prev, "Error connecting to Lab API."])
+            setLogs(prev => [...prev, "[ERROR] Connection lost with Lab Engine. Check Hive status."])
             setStatus("IDLE")
         } finally {
             setLoading(false)
@@ -66,7 +75,7 @@ export default function AgentLabDashboard() {
     }
 
     const resetLab = async () => {
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/lab/reset`, { method: "POST" })
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/lab/reset`, { method: "POST" })
         setStatus("IDLE")
         setLogs([])
         setMission("")
