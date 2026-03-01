@@ -1,100 +1,131 @@
 import os
 import re
-from typing import List, Dict, Any
+import logging
+from typing import List, Dict, Any, Optional
 from .chroma_client import chroma_manager
 import PyPDF2
-from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 class Ingestor:
+    """
+    Automates the ingestion and vectorization of canonical archives.
+    Implements context-aware splitting to preserve semantic logic in technical docs.
+    """
     def __init__(self):
-        # Generic splitter for academic/legal docs
+        self.logger = logging.getLogger("cslf.ingestor")
+        
+        # Generic splitter for academic/legal docs (Higher overlap for conceptual continuity)
         self.generic_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1200,
-            chunk_overlap=150
+            chunk_overlap=200,
+            add_start_index=True
         )
         
-        # 'Context-Aware' splitter for technical docs (Trench)
-        # We use a larger chunk size to keep exploit logic together
+        # 'Trench-Aware' splitter for technical docs/exploits
+        # Optimized to keep functional code blocks or exploit chains together
         self.tech_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=2000,
-            chunk_overlap=300,
-            separators=["\nclass ", "\ndef ", "\n# ", "\n\n", "\n", " "]
+            chunk_size=2500,
+            chunk_overlap=400,
+            separators=["\nclass ", "\ndef ", "\n# ", "\n\n", "\n", " "],
+            add_start_index=True
         )
 
     def extract_year(self, text: str, filename: str) -> int:
-        # Try finding 4-digit years in filename or first 2000 chars of text
+        """Heuristic discovery of document timestamp."""
+        # Check filename first (common pattern in archives)
         match = re.search(r'(20\d{2}|19\d{2})', filename)
         if not match:
-            match = re.search(r'(20\d{2}|19\d{2})', text[:2000])
-        return int(match.group(1)) if match else 2024 # Default to 2024 if unknown
+            # Check early text for copyright or date signatures
+            match = re.search(r'(20\d{2}|19\d{2})', text[:3000])
+        return int(match.group(1)) if match else 2025
 
     def detect_language(self, text: str) -> str:
-        if "import " in text or "def " in text: return "python"
-        if "bash" in text or "apt-get" in text: return "bash"
-        if "void main" in text or "#include" in text: return "c/cpp"
-        return "text"
+        """Improved heuristic for programming language detection in chunks."""
+        text_lower = text.lower()
+        if any(x in text for x in ["import ", "def ", 'if __name__ == "__main__"']): return "python"
+        if any(x in text_lower for x in ["apt-get ", "sudo ", "curl -", "grep "]): return "bash"
+        if any(x in text for x in ["void main", "#include <", "public class "]): return "compiled_lang"
+        if "select " in text_lower and "from " in text_lower: return "sql"
+        return "natural_language"
 
-    def get_authority(self, collection_name: str, filename: str) -> str:
-        if collection_name == "doctrine": return "High (Academic/Legal)"
-        if "S4vitar" in filename or "IppSec" in filename: return "High (Technical Expert)"
-        return "Medium (Resource)"
+    def get_authority_score(self, collection_name: str, filename: str) -> str:
+        """Categorizes document trust levels for weighted retrieval."""
+        fn = filename.lower()
+        if "nist" in fn or "iso" in fn or "whitepaper" in fn: return "Authority (Standard/Formal)"
+        if collection_name == "trench": return "Expert (Technical/Adversarial)"
+        return "General (Foundation)"
 
     def extract_text_from_pdf(self, file_path: str) -> str:
+        """Robust PDF text extraction with basic error isolation."""
         text = ""
         try:
             with open(file_path, 'rb') as f:
                 reader = PyPDF2.PdfReader(f)
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
+                for page_num, page in enumerate(reader.pages):
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += f"[PAGE {page_num+1}]\n{page_text}\n"
         except Exception as e:
-            print(f"Error reading PDF {file_path}: {e}")
+            self.logger.error(f"Failed to parse PDF {file_path}: {e}")
         return text
 
     def ingest_directory(self, collection_name: str, dir_path: str):
-        print(f"Ingesting {collection_name} from {dir_path}...")
-        collection = chroma_manager.get_collection(collection_name)
+        """Indexes an entire directory into the specified Chroma collection."""
+        self.logger.info(f"Synchronizing collection '{collection_name}' with source: {dir_path}")
         
-        if not os.path.exists(dir_path): return
+        try:
+            collection = chroma_manager.get_collection(collection_name)
+        except Exception as e:
+            self.logger.critical(f"VectorDB Connection Failure: {e}")
+            return
+
+        if not os.path.exists(dir_path):
+            self.logger.warning(f"Source path dormant: {dir_path}")
+            return
 
         for filename in os.listdir(dir_path):
             file_path = os.path.join(dir_path, filename)
             if not os.path.isfile(file_path): continue
 
+            self.logger.debug(f"Processing: {filename}")
             content = ""
-            if filename.endswith(".pdf"):
-                content = self.extract_text_from_pdf(file_path)
-            elif filename.endswith((".md", ".txt")):
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-            
-            if content:
-                year = self.extract_year(content, filename)
-                authority = self.get_authority(collection_name, filename)
+            try:
+                if filename.endswith(".pdf"):
+                    content = self.extract_text_from_pdf(file_path)
+                elif filename.endswith((".md", ".txt", ".py", ".c")):
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
                 
-                # Use tech splitter for Trench to preserve exploit logic
+                if not content.strip(): continue
+
+                year = self.extract_year(content, filename)
+                auth = self.get_authority_score(collection_name, filename)
+                
+                # Split strategy selection
                 splitter = self.tech_splitter if collection_name == "trench" else self.generic_splitter
                 chunks = splitter.split_text(content)
                 
+                # Metadata preparation
                 ids = [f"{filename}_{i}" for i in range(len(chunks))]
-                metadatas = []
-                for chunk in chunks:
-                    metadatas.append({
-                        "source": filename,
-                        "collection": collection_name,
-                        "year": year,
-                        "authority": authority,
-                        "language": self.detect_language(chunk),
-                        "type": "canonical_archive"
-                    })
+                metadatas = [{
+                    "source": filename,
+                    "collection": collection_name,
+                    "year": year,
+                    "authority": auth,
+                    "language": self.detect_language(chunk),
+                    "ingested_at": os.path.getmtime(file_path)
+                } for chunk in chunks]
                 
                 collection.add(documents=chunks, metadatas=metadatas, ids=ids)
-                print(f"Indexed {filename} ({len(chunks)} chunks) [Year: {year}] [Auth: {authority}]")
+                self.logger.info(f"Indexed {filename} | Chunks: {len(chunks)} | Collection: {collection_name}")
 
-# Example usage (can be triggered via API or CLI)
+            except Exception as e:
+                self.logger.error(f"Ingestion crash for {filename}: {e}")
+
 if __name__ == "__main__":
+    # Base configuration for containerized runs
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ingestor = Ingestor()
-    base_data_path = "/data/documents" # Path inside container
-    
-    ingestor.ingest_directory("doctrine", f"{base_data_path}/doctrine")
-    ingestor.ingest_directory("trench", f"{base_data_path}/trench")
-    ingestor.ingest_directory("future", f"{base_data_path}/future")
+    path_map = {"doctrine": "/data/documents/doctrine", "trench": "/data/documents/trench"}
+    for col, path in path_map.items():
+        ingestor.ingest_directory(col, path)
