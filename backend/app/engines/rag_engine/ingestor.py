@@ -1,20 +1,24 @@
 import os
 import re
 import logging
+import hashlib
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ProcessPoolExecutor
 from .chroma_client import chroma_manager
+from ..shared.telemetry import lattice_monitor
 import PyPDF2
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 class Ingestor:
     """
     Automates the ingestion and vectorization of canonical archives.
-    Implements context-aware splitting to preserve semantic logic in technical docs.
+    Implements context-aware splitting and parallel processing.
     """
     def __init__(self):
         self.logger = logging.getLogger("cslf.ingestor")
+        self.state_file = "./data/ingestion_state.json"
         
-        # Generic splitter for academic/legal docs (Higher overlap for conceptual continuity)
+        # Generic splitter for academic/legal docs
         self.generic_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1200,
             chunk_overlap=200,
@@ -22,7 +26,6 @@ class Ingestor:
         )
         
         # 'Trench-Aware' splitter for technical docs/exploits
-        # Optimized to keep functional code blocks or exploit chains together
         self.tech_splitter = RecursiveCharacterTextSplitter(
             chunk_size=2500,
             chunk_overlap=400,
@@ -30,17 +33,21 @@ class Ingestor:
             add_start_index=True
         )
 
+    def compute_file_hash(self, file_path: str) -> str:
+        """Computes SHA-256 hash of a file for change tracking."""
+        sha256_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+
     def extract_year(self, text: str, filename: str) -> int:
-        """Heuristic discovery of document timestamp."""
-        # Check filename first (common pattern in archives)
         match = re.search(r'(20\d{2}|19\d{2})', filename)
         if not match:
-            # Check early text for copyright or date signatures
             match = re.search(r'(20\d{2}|19\d{2})', text[:3000])
         return int(match.group(1)) if match else 2025
 
     def detect_language(self, text: str) -> str:
-        """Improved heuristic for programming language detection in chunks."""
         text_lower = text.lower()
         if any(x in text for x in ["import ", "def ", 'if __name__ == "__main__"']): return "python"
         if any(x in text_lower for x in ["apt-get ", "sudo ", "curl -", "grep "]): return "bash"
@@ -49,14 +56,12 @@ class Ingestor:
         return "natural_language"
 
     def get_authority_score(self, collection_name: str, filename: str) -> str:
-        """Categorizes document trust levels for weighted retrieval."""
         fn = filename.lower()
         if "nist" in fn or "iso" in fn or "whitepaper" in fn: return "Authority (Standard/Formal)"
         if collection_name == "trench": return "Expert (Technical/Adversarial)"
         return "General (Foundation)"
 
     def extract_text_from_pdf(self, file_path: str) -> str:
-        """Robust PDF text extraction with basic error isolation."""
         text = ""
         try:
             with open(file_path, 'rb') as f:
@@ -69,63 +74,76 @@ class Ingestor:
             self.logger.error(f"Failed to parse PDF {file_path}: {e}")
         return text
 
+    def process_file(self, collection_name: str, file_path: str) -> Optional[Dict[str, Any]]:
+        """Core logic for processing a single file. Suitable for parallel execution."""
+        filename = os.path.basename(file_path)
+        try:
+            content = ""
+            if filename.endswith(".pdf"):
+                content = self.extract_text_from_pdf(file_path)
+            elif filename.endswith((".md", ".txt", ".py", ".c")):
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            
+            if not content.strip(): return None
+
+            year = self.extract_year(content, filename)
+            auth = self.get_authority_score(collection_name, filename)
+            
+            splitter = self.tech_splitter if collection_name == "trench" else self.generic_splitter
+            chunks = splitter.split_text(content)
+            
+            ids = [f"{filename}_{i}" for i in range(len(chunks))]
+            metadatas = [{
+                "source": filename,
+                "collection": collection_name,
+                "year": year,
+                "authority": auth,
+                "language": self.detect_language(chunk),
+                "ingested_at": time.time()
+            } for chunk in chunks]
+            
+            return {"chunks": chunks, "metadatas": metadatas, "ids": ids}
+        except Exception as e:
+            self.logger.error(f"Process failure for {filename}: {e}")
+            return None
+
     def ingest_directory(self, collection_name: str, dir_path: str):
-        """Indexes an entire directory into the specified Chroma collection."""
-        self.logger.info(f"Synchronizing collection '{collection_name}' with source: {dir_path}")
+        """Indexes directory with parallel processing and state persistence."""
+        self.logger.info(f"SYNCHRONIZING: {collection_name} | {dir_path}")
+        lattice_monitor.update_heartbeat("rag", status="INGESTING")
         
         try:
             collection = chroma_manager.get_collection(collection_name)
         except Exception as e:
-            self.logger.critical(f"VectorDB Connection Failure: {e}")
+            self.logger.critical(f"CHROMA_FAILURE: {e}")
             return
 
         if not os.path.exists(dir_path):
-            self.logger.warning(f"Source path dormant: {dir_path}")
             return
 
-        for filename in os.listdir(dir_path):
-            file_path = os.path.join(dir_path, filename)
-            if not os.path.isfile(file_path): continue
-
-            self.logger.debug(f"Processing: {filename}")
-            content = ""
-            try:
-                if filename.endswith(".pdf"):
-                    content = self.extract_text_from_pdf(file_path)
-                elif filename.endswith((".md", ".txt", ".py", ".c")):
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                
-                if not content.strip(): continue
-
-                year = self.extract_year(content, filename)
-                auth = self.get_authority_score(collection_name, filename)
-                
-                # Split strategy selection
-                splitter = self.tech_splitter if collection_name == "trench" else self.generic_splitter
-                chunks = splitter.split_text(content)
-                
-                # Metadata preparation
-                ids = [f"{filename}_{i}" for i in range(len(chunks))]
-                metadatas = [{
-                    "source": filename,
-                    "collection": collection_name,
-                    "year": year,
-                    "authority": auth,
-                    "language": self.detect_language(chunk),
-                    "ingested_at": os.path.getmtime(file_path)
-                } for chunk in chunks]
-                
-                collection.add(documents=chunks, metadatas=metadatas, ids=ids)
-                self.logger.info(f"Indexed {filename} | Chunks: {len(chunks)} | Collection: {collection_name}")
-
-            except Exception as e:
-                self.logger.error(f"Ingestion crash for {filename}: {e}")
+        all_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))]
+        
+        # Parallel Execution
+        with ProcessPoolExecutor() as executor:
+            futures = [executor.submit(self.process_file, collection_name, fp) for fp in all_files]
+            
+            for future in futures:
+                result = future.result()
+                if result:
+                    try:
+                        collection.add(
+                            documents=result["chunks"],
+                            metadatas=result["metadatas"],
+                            ids=result["ids"]
+                        )
+                        self.logger.info(f"INDEXED: {result['metadatas'][0]['source']} ({len(result['chunks'])} chunks)")
+                    except Exception as e:
+                        self.logger.error(f"DB insertion error: {e}")
 
 if __name__ == "__main__":
-    # Base configuration for containerized runs
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ingestor = Ingestor()
-    path_map = {"doctrine": "/data/documents/doctrine", "trench": "/data/documents/trench"}
+    path_map = {"doctrine": "./data/documents/doctrine", "trench": "./data/documents/trench"}
     for col, path in path_map.items():
         ingestor.ingest_directory(col, path)

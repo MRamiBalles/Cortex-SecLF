@@ -7,6 +7,8 @@ from app.api.neuro import router as neuro_router
 from app.api.scientist import router as scientist_router
 from app.api.bridge import router as bridge_router
 from app.api.containment import router as containment_router
+from app.api.dojo import router as dojo_router
+from app.engines.shared.telemetry import lattice_monitor
 
 app = FastAPI(
     title="Cortex-Sec Local Forge",
@@ -42,4 +44,8 @@ app.include_router(containment_router)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "operational", "system": "Cortex-Sec Local Forge"}
+    return {
+        "status": "operational", 
+        "system": "Cortex-Sec Local Forge",
+        "telemetry": lattice_monitor.get_summary()
+    }

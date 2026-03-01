@@ -2,6 +2,8 @@ import docker
 import logging
 from typing import List, Dict, Any, Optional
 from docker.errors import DockerException, NotFound, APIError
+from ..shared.telemetry import lattice_monitor
+import time
 
 class DojoManager:
     """
@@ -129,5 +131,7 @@ class DojoManager:
             }
         except NotFound:
             return {"id": lab_id, "status": "dormant"}
+        finally:
+            lattice_monitor.update_heartbeat("dojo")
 
 dojo_manager = DojoManager()

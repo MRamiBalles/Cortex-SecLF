@@ -6,6 +6,7 @@ from docker.errors import DockerException, NotFound
 
 from ..policy_engine.engine import policy_engine
 from .incident_ledger import incident_ledger
+from ..shared.telemetry import lattice_monitor
 
 class ActiveWatcher:
     """
@@ -96,6 +97,8 @@ class ActiveWatcher:
             for forbidden in policy["forbidden_processes"]:
                 if forbidden in ps.lower():
                     return self.trigger_kill_switch(container, f"Unauthorized Process Activity: {forbidden}", ps)
+        
+        lattice_monitor.update_heartbeat("lab", status="WATCHING")
         
         return {
             "status": "watching",

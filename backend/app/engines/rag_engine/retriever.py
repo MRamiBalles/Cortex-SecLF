@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from .chroma_client import chroma_manager
+from ..shared.telemetry import lattice_monitor
 import os
 
 class StrictRetriever:
@@ -7,6 +8,7 @@ class StrictRetriever:
         self.threshold = threshold
 
     def retrieve(self, query: str, collection_name: str, n_results: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        lattice_monitor.update_heartbeat("rag", status="RETRIEVING")
         collection = chroma_manager.get_collection(collection_name)
         
         # Build ChromaDB 'where' filter
