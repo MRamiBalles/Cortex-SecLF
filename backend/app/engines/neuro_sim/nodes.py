@@ -4,16 +4,19 @@ from typing import Dict, Any
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
+from .tpm_provider import tpm_manager
+
 class HIVENode:
     """
     Simulates a distributed node in the HIVE-Net consensus network.
     Uses industrial-grade Ed25519 for verifiable digital identities.
+    Identities are seeded from a hardware-rooted TPM.
     """
-    def __init__(self, node_id: str, private_key_hex: str):
+    def __init__(self, node_id: str):
         self.node_id = node_id
-        # In a real system, keys would be loaded from a secure enclave/TPM
-        # Here we derive a stable private key from the provided hex string
-        seed = private_key_hex.encode().ljust(32, b'0')[:32]
+        # Sovereign Infrastructure: Derive stable private key from TPM NVRAM
+        seed_str = tpm_manager.get_seed(node_id)
+        seed = seed_str.encode().ljust(32, b'0')[:32]
         self._private_key = ed25519.Ed25519PrivateKey.from_private_bytes(seed)
         self.public_key = self._private_key.public_key()
 

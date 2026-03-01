@@ -5,7 +5,7 @@ import asyncio
 import base64
 from typing import List, Dict, Any
 from .nodes import HIVE_NODES
-from .vault import hive_vault
+from .tpm_provider import tpm_manager
 from .mesh_bus import mesh_bus
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
@@ -31,11 +31,12 @@ class ConsentLedger:
             "action": "INIT_LEDGER",
             "previous_hash": "0",
             "permission_state": "REVOKED",
-            "signatures": []
+            "signatures": [],
+            "tpm_attestation": tpm_manager.create_quote("GENESIS_ESTABLISHED")
         }
         genesis["hash"] = self._calculate_hash(genesis)
         self.chain.append(genesis)
-        hive_vault.extend_pcr(18, genesis["hash"])
+        tpm_manager.extend_pcr("0", genesis["hash"])
 
     def _calculate_hash(self, block: Dict[str, Any]) -> str:
         block_copy = {k: v for k, v in block.items() if k not in ["hash", "signatures"]}
@@ -91,12 +92,15 @@ class ConsentLedger:
         new_block["signatures"] = self._pending_signatures[block_hash]
         new_block["hash"] = block_hash
         
+        # 4. Attach Hardware Attestation Quote
+        new_block["tpm_attestation"] = tpm_manager.create_quote(block_hash)
+        
         # Verify all gathered signatures before commit
         for sig in new_block["signatures"]:
             if not self._verify_node_signature(block_hash, sig):
                 raise ValueError(f"CONSENSUS_BREACH: Invalid signature from node {sig['node_id']}")
 
-        hive_vault.extend_pcr(18, block_hash)
+        tpm_manager.extend_pcr("10", block_hash)
         self.chain.append(new_block)
         self.current_permission = state
         
@@ -139,7 +143,7 @@ class ConsentLedger:
             "reason": "Consent Revoked"
         }
         
-        hive_vault.extend_pcr(19, f"{requester}:{time.time()}")
+        tpm_manager.extend_pcr("10", f"{requester}:{time.time()}")
         
         if self.current_permission == "GRANTED":
             access_log["decision"] = "ALLOWED"

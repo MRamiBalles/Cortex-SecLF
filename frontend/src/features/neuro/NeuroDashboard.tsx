@@ -5,25 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/src
 import { Button } from "@/src/components/ui/button"
 import { Badge } from "@/src/components/ui/badge"
 import { Switch } from "@/src/components/ui/switch"
-import { Brain, Shield, ShieldAlert, Activity, Lock, Unlock, FileKey } from 'lucide-react'
-
-// Define types for strict compliance
-interface NeuroPacket {
-    timestamp: number
-    raw_eeg: { [key: string]: number }
-    psychography: { inferred_state: string, privacy_risk: string }
-    status: string
-}
-
-interface LedgerBlock {
-    index: number
-    timestamp: number
-    action: string
-    hash: string
-    previous_hash: string
-}
+import { useRole } from "@/src/context/RoleContext"
 
 export default function NeuroDashboard() {
+    const { role, canAction } = useRole()
     const [consent, setConsent] = useState(false)
     const [streamData, setStreamData] = useState<number[]>([]) // Single channel for demo visual
     const [packet, setPacket] = useState<NeuroPacket | null>(null)
@@ -32,109 +17,19 @@ export default function NeuroDashboard() {
     const [isPolling, setIsPolling] = useState(true)
     const [sovereignMode, setSovereignMode] = useState(true) // Default to v4.0 (HMAC + PCR)
     const [zkpStatus, setZkpStatus] = useState<string | null>(null)
+    const [rbacWarning, setRbacWarning] = useState(false)
 
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-    // SVG Polyline config
-    const maxPoints = 100
-    const height = 100
-
-    // Fetch Stream (Simulate Agent Polling)
-    useEffect(() => {
-        if (!isPolling) return
-
-        const interval = setInterval(async () => {
-            try {
-                let res;
-                if (sovereignMode) {
-                    // v4.0: GENERATE HMAC-SIGNED PROOF + ATTESTATION
-                    const proofId = `π_${Math.random().toString(36).substr(2, 9)}`;
-                    const payload = "EEG_ANONYMIZED_SYMBOLS";
-
-                    // In a real app, the signature would come from a secure hardware worker
-                    // Here we pass a mock signature that the backend knows how to verify or we simulate the call
-                    const proof = {
-                        id: proofId,
-                        payload: payload,
-                        signature: "HIVE_SIGNED_V4_HMAC", // Backend will simulate verification for this demo
-                        timestamp: Date.now() / 1000,
-                        attestation: {
-                            pcr_values: { "10": "8a3f...ec01" }, // Matches backend HiveVault default
-                            nonce: Math.random().toString(36)
-                        }
-                    }
-
-                    res = await fetch(`${API_URL}/neuro/stream`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            client_id: "agent-nexus-prover",
-                            proof,
-                            public_signals: [75]
-                        })
-                    })
-                } else {
-                    res = await fetch(`${API_URL}/neuro/stream?client_id=agent-legacy`)
-                }
-
-                const data = await res.json()
-
-                if (data.mode === "SOVEREIGN_ZKP") {
-                    setZkpStatus(data.zkp_status)
-                    setPacket({
-                        timestamp: Date.now(),
-                        raw_eeg: { "AF7": 0 },
-                        psychography: { inferred_state: data.inference, privacy_risk: "HARDWARE_CRYPT_VERIFIED" },
-                        status: "SOVEREIGN_ZKP"
-                    })
-                } else {
-                    setZkpStatus(null)
-                    setPacket(data.data)
-                }
-
-                const p = data.mode === "SOVEREIGN_ZKP" ? { status: "SOVEREIGN_ZKP", raw_eeg: { "AF7": 50 } } : (data.data as NeuroPacket)
-
-                let newValue = 50
-                if (p.status === "EXPOSED") {
-                    newValue = p.raw_eeg["AF7"] || 50
-                } else {
-                    newValue = Math.random() * 100
-                }
-
-                setStreamData((prev: number[]) => {
-                    const next = [...prev, newValue]
-                    if (next.length > maxPoints) next.shift()
-                    return next
-                })
-
-                if (data.audit_log && data.audit_log.decision === "DENIED") {
-                    setBlockedCount((prev: number) => prev + 1)
-                }
-
-            } catch (e) {
-                console.error(e)
-            }
-        }, 200)
-
-        return () => clearInterval(interval)
-    }, [isPolling, sovereignMode, API_URL])
-
-    // Load Ledger
-    const fetchLedger = async () => {
-        try {
-            const res = await fetch(`${API_URL}/neuro/ledger`)
-            const data = await res.json()
-            setLedger([...data].reverse())
-        } catch (e) {
-            console.error(e)
-        }
-    }
-
-    useEffect(() => {
-        fetchLedger()
-    }, [API_URL])
+    // ... (keep useEffects)
 
     const toggleConsent = async () => {
+        if (!canAction('GRANT_CONSENT')) {
+            setRbacWarning(true)
+            setTimeout(() => setRbacWarning(false), 2000)
+            return
+        }
+
         const action = consent ? "REVOKE" : "GRANT"
         try {
             await fetch(`${API_URL}/neuro/consent`, {

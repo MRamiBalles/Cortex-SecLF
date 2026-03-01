@@ -5,6 +5,7 @@ import hashlib
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ProcessPoolExecutor
 from .chroma_client import chroma_manager
+from .ipfs_client import ipfs_client
 from ..shared.telemetry import lattice_monitor
 import PyPDF2
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -90,6 +91,9 @@ class Ingestor:
             year = self.extract_year(content, filename)
             auth = self.get_authority_score(collection_name, filename)
             
+            # Sovereign Infrastructure: Pin to IPFS
+            cid = ipfs_client.pin_content(content)
+            
             splitter = self.tech_splitter if collection_name == "trench" else self.generic_splitter
             chunks = splitter.split_text(content)
             
@@ -100,6 +104,7 @@ class Ingestor:
                 "year": year,
                 "authority": auth,
                 "language": self.detect_language(chunk),
+                "ipfs_cid": cid,
                 "ingested_at": time.time()
             } for chunk in chunks]
             
