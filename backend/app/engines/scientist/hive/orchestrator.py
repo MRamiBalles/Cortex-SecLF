@@ -23,11 +23,16 @@ from ...neuro_sim.nodes import HIVE_NODES
 load_dotenv()
 
 class HiveOrchestrator:
-    def __init__(self):
-        self.logger = logging.getLogger("cslf.hive")
+    def __init__(self, team_id: str = "DEFAULT_HIVE"):
+        self.team_id = team_id
+        self.logger = logging.getLogger(f"cslf.hive.{team_id}")
         self.docker_proxy_url = os.getenv("DOCKER_PROXY_URL", "tcp://cslf-docker-proxy:2375")
         self.prompts_dir = "backend/app/engines/scientist/hive/prompts"
         
+        # Collaborative Findings cache (Shared via P2P)
+        self.collaborative_findings: List[Dict[str, Any]] = []
+        mesh_bus.subscribe(self._on_collaborative_pulse)
+
         # Clients
         self.openai_client = OpenAI() if os.getenv("OPENAI_API_KEY") else None
         self.anthropic_client = Anthropic() if os.getenv("ANTHROPIC_API_KEY") else None
@@ -37,14 +42,15 @@ class HiveOrchestrator:
         
         try:
             self.client = docker.DockerClient(base_url=self.docker_proxy_url)
-            self.logger.info("Connected to Docker Proxy Cage.")
+            self.logger.info(f"Team {team_id} connected to Docker Proxy Cage.")
         except Exception:
-            self.logger.warning("Docker Proxy unreachable. Activating Sovereign Mock (Subprocess Sandbox).")
+            self.logger.warning(f"Docker unreachable. Team {team_id} activating Sovereign Mock.")
             self.client = None
             self.sovereign_mock = True
 
         self.dsg = {
-            "version": "4.0", # Enterprise Orchestration
+            "version": "4.5", # MART Coordination
+            "team_id": team_id,
             "project_id": None,
             "topic": None,
             "status": "IDLE",
@@ -57,6 +63,22 @@ class HiveOrchestrator:
             "edges": ["ideation -> realization", "realization -> field_test", "field_test -> audit"]
         }
 
+    async def _on_collaborative_pulse(self, msg: Dict[str, Any]):
+        """Listen for research pulses from other HIVE teams."""
+        if msg.get("type") == "RESEARCH_PULSE" and msg.get("team_id") != self.team_id:
+            self.logger.info(f"MART: Received insight from Team {msg['team_id']}")
+            self.collaborative_findings.append(msg)
+
+    async def broadcast_insight(self, insight: Dict[str, Any]):
+        """Shares a technical insight with other teams via the decentralized mesh."""
+        payload = {
+            "type": "RESEARCH_PULSE",
+            "team_id": self.team_id,
+            "data": insight,
+            "timestamp": time.time()
+        }
+        await mesh_bus.broadcast(payload, topic="lattice/mart/v1")
+
     def _load_prompt(self, agent_name: str) -> str:
         path = os.path.join(self.prompts_dir, f"{agent_name}.txt")
         if os.path.exists(path):
@@ -65,7 +87,13 @@ class HiveOrchestrator:
         return ""
 
     def _llm_call(self, agent: str, system_prompt: str, user_prompt: str) -> str:
-        self.logger.info(f"LLM_CALL for {agent}")
+        # Include collaborative context for the LLM
+        if self.collaborative_findings:
+            collaborative_context = "\n\nInsights from other HIVE teams:\n" + \
+                                   json.dumps(self.collaborative_findings[-3:], indent=2)
+            user_prompt += collaborative_context
+
+        self.logger.info(f"LLM_CALL for {agent} ({self.team_id})")
         try:
             if agent == "theorist" and self.openai_client:
                 response = self.openai_client.chat.completions.create(
@@ -99,14 +127,14 @@ class HiveOrchestrator:
             )
             return response['message']['content']
         except Exception as e:
-            self.logger.warning(f"LLM Call Primary Fallback Failed for {agent}: {e}")
+            self.logger.warning(f"LLM Primary Fallback Failed for {agent}: {e}")
             # Final Safety Net for Reviewer if even OpenAI failed or agent is reviewer
             if agent == "reviewer":
                 return json.dumps({"score": 5, "verdict": "REVISE", "critique": f"Reviewer communication failure: {e}"})
             return json.dumps({"error": str(e), "verdict": "REJECT", "code": "print('LLM_ERROR')"})
 
     def initialize_project(self, topic: str):
-        self.dsg["project_id"] = f"HIVE_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.dsg["project_id"] = f"MART_{self.team_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.dsg["topic"] = topic
         self.dsg["status"] = "ACTIVE"
         self.logger.info(f"Project Initialized: {self.dsg['project_id']}")
@@ -163,8 +191,8 @@ class HiveOrchestrator:
             if os.path.exists(path):
                 os.remove(path)
 
-    def step_theorist(self, topic: str):
-        self.logger.info(f"THEORIST START: Multi-Collection Grounding for '{topic}'...")
+    async def step_theorist(self, topic: str):
+        self.logger.info(f"THEORIST [{self.team_id}] START: Multi-Collection Grounding...")
         
         # 1. Parallel Retrieval from Canonical Collections
         doctrine_results = retriever.retrieve(topic, collection_name="doctrine", n_results=3)
@@ -206,9 +234,13 @@ class HiveOrchestrator:
             "status": "GROUNDED_AND_VERIFIED"
         }
         self.logger.info("THEORIST COMPLETE: Hypothesis grounded in Archive.")
+        
+        # Broadcast discovery to other MART teams
+        await self.broadcast_insight({"hypothesis": content, "sources": sources})
+        
         return True
 
-    def step_engineer(self):
+    async def step_engineer(self):
         hyp_content = self.dsg["nodes"]["ideation"]["content"]
         if not hyp_content: return False
 
@@ -217,7 +249,7 @@ class HiveOrchestrator:
         current_user_prompt = f"Goal: Realize this hypothesis: {json.dumps(hyp_content)}\nGenerate Python code."
         
         for trial in range(max_trials):
-            self.logger.info(f"ENGINEER TRIAL {trial+1}/{max_trials}...")
+            self.logger.info(f"ENGINEER [{self.team_id}] TRIAL {trial+1}/{max_trials}...")
             
             response = self._llm_call("engineer", sys_prompt, current_user_prompt)
             try:
@@ -234,6 +266,8 @@ class HiveOrchestrator:
             if exec_result["exit_code"] == 0:
                 self.dsg["nodes"]["realization"]["content"] = code
                 self.dsg["nodes"]["realization"]["status"] = "COMPILED"
+                # Share success with other teams
+                await self.broadcast_insight({"status": "SUCCESS", "module": "ENGINEER", "code_snippet": code[:100]})
                 return True
             else:
                 self.logger.warning(f"TRIAL {trial+1} FAILED: Reflexion triggered.")
@@ -243,14 +277,14 @@ class HiveOrchestrator:
         return False
 
 
-    def step_field_test(self, lab_id: str = "vulnerable_web"):
+    async def step_field_test(self, lab_id: str = "vulnerable_web"):
         """
         Field Test: Deploys a real Dojo lab and targets it with the generated realization.
         """
         if self.dsg["nodes"]["realization"]["status"] != "COMPILED":
             return False
             
-        self.logger.info(f"FIELD TEST START: Deploying lab '{lab_id}' for exploit validation...")
+        self.logger.info(f"FIELD TEST [{self.team_id}] START: Deploying lab '{lab_id}' for exploit validation...")
         
         # 1. Start Lab
         lab_result = dojo_manager.start_lab(lab_id)
@@ -273,6 +307,10 @@ class HiveOrchestrator:
             "status": "VERIFIED_IN_FIELD" if exec_result["exit_code"] == 0 else "FAILED_IN_FIELD"
         }
         self.logger.info(f"FIELD TEST COMPLETE: Status={exec_result['exit_code']}")
+        
+        if exec_result["exit_code"] == 0:
+             await self.broadcast_insight({"status": "FIELD_GOAL", "lab": lab_id, "logs": exec_result["logs"][:200]})
+             
         return True
 
     async def _collect_quorum(self, artifact_hash: str, timeout: float = 5.0) -> List[Dict[str, Any]]:
@@ -348,12 +386,39 @@ class HiveOrchestrator:
             self.dsg["status"] = "REJECTED_BY_PEER_REVIEW"
         return True
 
-    def execute_complete_cycle(self, topic: str, lab_id: str = "vulnerable_web"):
+    async def execute_complete_cycle(self, topic: str, lab_id: str = "vulnerable_web"):
         self.initialize_project(topic)
-        if not self.step_theorist(topic): return self.dsg
-        if not self.step_engineer(): return self.dsg
-        self.step_field_test(lab_id)
-        if not self.step_reviewer(): return self.dsg
+        if not await self.step_theorist(topic): return self.dsg
+        if not await self.step_engineer(): return self.dsg
+        await self.step_field_test(lab_id)
+        await self.step_reviewer()
         return self.dsg
 
+class ParallelHive:
+    """
+    Orchestrates multiple HIVE teams for MART (Multi-Agent Red-Teaming).
+    Coordination happens via the LibP2P-bridged mesh bus.
+    """
+    def __init__(self, cluster_id: str = "MART_CLUSTER_01"):
+        self.cluster_id = cluster_id
+        self.teams: Dict[str, HiveOrchestrator] = {}
+        self.logger = logging.getLogger(f"cslf.mart.{cluster_id}")
+
+    def spawn_team(self, team_id: str):
+        self.logger.info(f"MART: Spawning Team {team_id}...")
+        self.teams[team_id] = HiveOrchestrator(team_id=team_id)
+        return self.teams[team_id]
+
+    async def execute_coordinated_strike(self, common_topic: str, lab_id: str):
+        """Runs multiple teams against the same objective, sharing insights."""
+        tasks = []
+        for team_id in self.teams:
+            tasks.append(self.teams[team_id].execute_complete_cycle(common_topic, lab_id))
+        
+        results = await asyncio.gather(*tasks)
+        self.logger.info(f"MART CLUSTER COMPLETE: {len(results)} teams reported final status.")
+        return results
+
+# Singleton for the local environment
 hive_orchestrator = HiveOrchestrator()
+mart_cluster = ParallelHive()
