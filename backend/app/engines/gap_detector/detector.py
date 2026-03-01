@@ -87,4 +87,19 @@ class GapDetector:
 
         return stats
 
+    def generate_research_prompt(self, gap_report: Dict[str, Any]) -> str:
+        """
+        Translates a gap report into a high-fidelity research prompt for the Scientist.
+        """
+        missing = [g["topic"] for g in gap_report.get("missing_topics", [])]
+        if not missing:
+            return "No critical knowledge gaps detected. System status: CANONICAL_COMPLETE."
+            
+        topics_str = ", ".join(missing)
+        return (
+            f"URGENT RESEARCH MANDATE: The following knowledge gaps have been detected in the HIVE archive: {topics_str}. "
+            "Synthesize new defensive strategies and offensive proofs-of-concept to achieve Red/Blue parity. "
+            "Prioritize ground-truth implementation over theoretical analysis."
+        )
+
 gap_detector = GapDetector()

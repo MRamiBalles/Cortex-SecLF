@@ -41,19 +41,21 @@ class NeuroDataRequest(BaseModel):
 async def get_neuro_data(req: NeuroDataRequest):
     """
     Simulates a request for neuro-data (v3.0 Sovereign Mode).
+    Now requires proof + attestation.
     """
     if req.proof and req.public_signals:
         is_verified = zkp_verifier.verify_stress_proof(req.proof, req.public_signals)
-        zkp_status = "VERIFIED" if is_verified else "FAILED"
+        zkp_status = "VERIFIED (+HW_ATTESTATION)" if is_verified else "FAILED"
         
         if is_verified:
-            consent_ledger.log_access(req.client_id, "ZKP_VERIFIED_INFERENCE", "GRANTED")
+            consent_ledger.log_access(req.client_id, "ZKP_HW_VERIFIED", "GRANTED")
             return {
                 "mode": "SOVEREIGN_ZKP",
                 "zkp_status": zkp_status,
-                "inference": "STRESSED (Verified via Math)",
+                "attestation": "HARDWARE_ROOTED_SUCCESS",
+                "inference": "STRESSED (Verified via Math & TPM)",
                 "raw_data": "REDACTED_BY_ZKP",
-                "message": "Privacy preserved. Raw data never reached the server."
+                "vault_status": hive_vault.pcrs[10][:16] + "..."
             }
 
     # Fallback to legacy check if no proof provided

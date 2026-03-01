@@ -37,15 +37,19 @@ export default function NeuroDashboard() {
             try {
                 let res;
                 if (sovereignMode) {
-                    // v3.0: GENERATE ZKP PROOF (Mock)
+                    // v3.0: GENERATE ZKP PROOF + ATTESTATION (Mock)
                     const proof = {
                         id: `π_${Math.random().toString(36).substr(2, 9)}`,
                         metadata: "CORTEX_ZKP_v3",
-                        timestamp: Date.now() / 1000
+                        timestamp: Date.now() / 1000,
+                        attestation: {
+                            pcr_values: { "10": "8a3f...ec01" }, // Mocking PCR-10 match
+                            nonce: Math.random().toString(36)
+                        }
                     }
-                    const public_signals = [75] // Threshold constant
+                    const public_signals = [75]
 
-                    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/stream`, {
+                    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/neuro/stream`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
@@ -55,8 +59,7 @@ export default function NeuroDashboard() {
                         })
                     })
                 } else {
-                    // v2.0: LEGACY GET (Exposes Identity to check Consent)
-                    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/stream?client_id=agent-legacy`)
+                    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/neuro/stream?client_id=agent-legacy`)
                 }
 
                 const data = await res.json()
@@ -109,9 +112,9 @@ export default function NeuroDashboard() {
 
     // Load Ledger
     const fetchLedger = async () => {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/ledger`)
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/neuro/ledger`)
         const data = await res.json()
-        setLedger(data.reverse()) // Show newest first
+        setLedger([...data].reverse())
     }
 
     // Initial Load
@@ -121,7 +124,7 @@ export default function NeuroDashboard() {
 
     const toggleConsent = async () => {
         const action = consent ? "REVOKE" : "GRANT"
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8008'}/neuro/consent`, {
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/neuro/consent`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action })
@@ -290,8 +293,8 @@ export default function NeuroDashboard() {
                             {ledger.map((block) => (
                                 <div key={block.index} className="p-4 border-b border-neutral-800 hover:bg-neutral-800/50 transition-colors">
                                     <div className="flex justify-between items-center mb-2">
-                                        <Badge variant={block.action === "GRANT" ? "default" : "secondary"} className={`text-[10px] ${block.action === "REVOKE" ? 'bg-neutral-700 text-neutral-300' : 'bg-red-900 text-red-200 hover:bg-red-800'}`}>
-                                            {block.action === "GRANT" ? "CONSENT_OFF (EXPOSED)" : "CONSENT_REVOKED"}
+                                        <Badge variant={block.action === "GRANT" ? "default" : "secondary"} className={`text-[10px] ${block.action === "REVOKE" ? 'bg-neutral-700 text-neutral-300' : 'bg-green-900/40 text-green-300 border-green-800'}`}>
+                                            {block.action === "GRANT" ? "HIVE_CONSENSUS_VERIFIED" : "CONSENT_REVOKED"}
                                         </Badge>
                                         <span className="text-[10px] text-neutral-500 font-mono">#{block.index}</span>
                                     </div>
