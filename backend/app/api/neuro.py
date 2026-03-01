@@ -1,8 +1,11 @@
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List
 from ..engines.neuro_sim.generator import neuro_gen
 from ..engines.neuro_sim.ledger import consent_ledger
 from ..engines.neuro_sim.zkp_verify import zkp_verifier
+from ..engines.neuro_sim.nodes import HIVE_NODES
+from ..engines.neuro_sim.vault import hive_vault
 
 router = APIRouter(prefix="/neuro", tags=["Neuro-Rights"])
 
@@ -11,9 +14,6 @@ class ConsentRequest(BaseModel):
 
 @router.get("/stream")
 async def get_neuro_stream():
-    """
-    Simulates an Agent requesting cached neurodata (Legacy).
-    """
     access_check = consent_ledger.check_access(requester="Marketing_Agent_v4")
     packet = neuro_gen.stream_packet()
     
@@ -32,45 +32,32 @@ async def get_neuro_stream():
         "audit_log": access_check["log"]
     }
 
-class NeuroDataRequest(BaseModel):
-    client_id: str
-    proof: Dict[str, Any] = None
-    public_signals: list = None
-
-@router.post("/stream")
-async def get_neuro_data(req: NeuroDataRequest):
-    """
-    Simulates a request for neuro-data (v3.0 Sovereign Mode).
-    Now requires proof + attestation.
-    """
-    if req.proof and req.public_signals:
-        is_verified = zkp_verifier.verify_stress_proof(req.proof, req.public_signals)
-        zkp_status = "VERIFIED (+HW_ATTESTATION)" if is_verified else "FAILED"
-        
-        if is_verified:
-            consent_ledger.log_access(req.client_id, "ZKP_HW_VERIFIED", "GRANTED")
-            return {
-                "mode": "SOVEREIGN_ZKP",
-                "zkp_status": zkp_status,
-                "attestation": "HARDWARE_ROOTED_SUCCESS",
-                "inference": "STRESSED (Verified via Math & TPM)",
-                "raw_data": "REDACTED_BY_ZKP",
-                "vault_status": hive_vault.pcrs[10][:16] + "..."
-            }
-
-    # Fallback to legacy check if no proof provided
-    access_check = consent_ledger.check_access(req.client_id)
-    packet = neuro_gen.stream_packet()
-    return {"data": packet, "audit_log": access_check["log"]}
-
 @router.post("/consent")
 async def update_consent(req: ConsentRequest):
     if req.action not in ["GRANT", "REVOKE"]:
         raise HTTPException(status_code=400, detail="Invalid action")
     
-    block = consent_ledger.update_consent(req.action)
-    return {"status": "success", "new_block": block}
+    try:
+        block = await consent_ledger.update_consent(req.action)
+        return {"status": "success", "new_block": block}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/ledger")
 async def get_ledger():
     return consent_ledger.get_ledger()
+
+@router.get("/nodes")
+async def get_nodes():
+    """Returns the status and identity fingerprints of all mesh nodes."""
+    return {
+        "nodes": [
+            {
+                "id": node.node_id,
+                "fingerprint": node.get_fingerprint(),
+                "status": "ONLINE",
+                "last_seen": time.time(),
+                "algo": "Ed25519"
+            } for node in HIVE_NODES
+        ]
+    }
