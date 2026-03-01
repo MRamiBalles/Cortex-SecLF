@@ -4,6 +4,7 @@ import Link from "next/link";
 import React from "react";
 import { Shield, Cpu, Zap, Database, Brain, Activity, ExternalLink } from "lucide-react";
 import NexusTopology from "@/src/features/nexus/NexusTopology";
+import FederationMap from "@/src/features/nexus/FederationMap";
 
 interface ModuleCardProps {
     title: string;
@@ -25,19 +26,27 @@ export default function Home() {
             {/* HERO SECTION */}
             <div className="z-10 text-center mb-10 max-w-4xl pt-10">
                 <div className="inline-block px-4 py-1 mb-6 rounded-full border border-neutral-800 bg-neutral-900/50 text-cyan-400 text-[10px] font-mono tracking-[0.3em] uppercase animate-in fade-in slide-in-from-bottom-4 duration-1000">
-                    Sovereign AI Governance // Phase 7: Enterprise Convergence
+                    Sovereign AI Governance // Phase 10: Global Sovereignty
                 </div>
                 <h1 className="text-6xl md:text-8xl font-black mb-6 tracking-tighter bg-gradient-to-b from-white to-neutral-500 bg-clip-text text-transparent italic">
-                    NEXUS <span className="not-italic text-cyan-500 text-4xl md:text-5xl align-top font-mono tracking-tighter">v7.0</span>
+                    NEXUS <span className="not-italic text-cyan-500 text-4xl md:text-5xl align-top font-mono tracking-tighter">v10.0</span>
                 </h1>
                 <p className="text-neutral-400 text-lg md:text-xl font-medium max-w-2xl mx-auto leading-relaxed">
-                    The autonomous command interface for the <span className="text-white">Cortex-SecLF</span> enterprise security lattice.
+                    The autonomous command interface for the <span className="text-white">Cortex-SecLF</span> global security mesh.
                 </p>
             </div>
 
-            {/* TOPOLOGY VISUALIZER */}
-            <div className="w-full max-w-5xl z-10 mb-20 animate-in fade-in zoom-in duration-1000 delay-300">
-                <NexusTopology />
+            {/* TOPOLOGY & FEDERATION VISUALIZERS */}
+            <div className="w-full max-w-5xl z-10 mb-20 space-y-20 animate-in fade-in zoom-in duration-1000 delay-300">
+                <div>
+                    <h2 className="text-[10px] uppercase tracking-[0.4em] text-neutral-500 mb-6 text-center font-bold">Lattice_Topology_Local</h2>
+                    <NexusTopology />
+                </div>
+
+                <div>
+                    <h2 className="text-[10px] uppercase tracking-[0.4em] text-neutral-500 mb-6 text-center font-bold">Federated_Security_Quorum_Global</h2>
+                    <FederationMap />
+                </div>
             </div>
 
             {/* MODULE GRID */}
