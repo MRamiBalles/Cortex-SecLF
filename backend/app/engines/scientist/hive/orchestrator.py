@@ -15,6 +15,7 @@ import ollama
 from dotenv import load_dotenv
 
 from ...rag_engine.retriever import retriever
+from ...dojo_ctrl.manager import dojo_manager
 
 # Load environment variables from .env
 load_dotenv()
@@ -48,9 +49,10 @@ class HiveOrchestrator:
             "nodes": {
                 "ideation": {"content": None, "grounding": [], "status": "PENDING"},
                 "realization": {"content": None, "trials": [], "status": "PENDING"},
+                "field_test": {"lab": None, "result": None, "status": "PENDING"},
                 "audit": {"score": 0, "verdict": None, "critique": None, "status": "PENDING"}
             },
-            "edges": ["ideation -> realization", "realization -> audit"]
+            "edges": ["ideation -> realization", "realization -> field_test", "field_test -> audit"]
         }
 
     def _load_prompt(self, agent_name: str) -> str:
@@ -238,12 +240,50 @@ class HiveOrchestrator:
         self.dsg["nodes"]["realization"]["status"] = "FAILED_CIRCUIT_BREAKER"
         return False
 
+
+    def step_field_test(self, lab_id: str = "vulnerable_web"):
+        """
+        Field Test: Deploys a real Dojo lab and targets it with the generated realization.
+        """
+        if self.dsg["nodes"]["realization"]["status"] != "COMPILED":
+            return False
+            
+        self.logger.info(f"FIELD TEST START: Deploying lab '{lab_id}' for exploit validation...")
+        
+        # 1. Start Lab
+        lab_result = dojo_manager.start_lab(lab_id)
+        if lab_result["status"] != "online":
+            self.dsg["nodes"]["field_test"]["status"] = "CANCELLED_LAB_FAILURE"
+            return False
+
+        # 2. Execute Realization (Targeting the Lab)
+        # We inject the access_url into the realization environment
+        code = self.dsg["nodes"]["realization"]["content"]
+        target_code = f"import os\nos.environ['TARGET_URL'] = '{lab_result['access_url']}'\n{code}"
+        
+        exec_result = self.run_sandbox_execution(target_code)
+        
+        # 3. Teardown & Report
+        dojo_manager.stop_lab(lab_id)
+        
+        self.dsg["nodes"]["field_test"] = {
+            "lab": lab_id,
+            "result": exec_result,
+            "status": "VERIFIED_IN_FIELD" if exec_result["exit_code"] == 0 else "FAILED_IN_FIELD"
+        }
+        self.logger.info(f"FIELD TEST COMPLETE: Status={exec_result['exit_code']}")
+        return True
+
     def step_reviewer(self):
         if self.dsg["nodes"]["realization"]["status"] != "COMPILED":
             return False
 
+        field_data = self.dsg["nodes"]["field_test"]
         sys_prompt = self._load_prompt("reviewer")
-        user_prompt = f"Hypothesis: {json.dumps(self.dsg['nodes']['ideation']['content'])}\nImplementation: {self.dsg['nodes']['realization']['content']}\nLogs: {self.dsg['nodes']['realization']['trials'][-1]['logs']}\n\nAudit strictly."
+        user_prompt = f"Hypothesis: {json.dumps(self.dsg['nodes']['ideation']['content'])}\n" \
+                     f"Implementation: {self.dsg['nodes']['realization']['content']}\n" \
+                     f"Field Test Result ({field_data['lab']}): {json.dumps(field_data['result'])}\n\n" \
+                     f"Audit strictly. If Field Test failed, penalize score."
         
         response = self._llm_call("reviewer", sys_prompt, user_prompt)
         try:
@@ -264,10 +304,11 @@ class HiveOrchestrator:
             self.dsg["status"] = "REJECTED_BY_PEER_REVIEW"
         return True
 
-    def execute_complete_cycle(self, topic: str):
+    def execute_complete_cycle(self, topic: str, lab_id: str = "vulnerable_web"):
         self.initialize_project(topic)
         if not self.step_theorist(topic): return self.dsg
         if not self.step_engineer(): return self.dsg
+        self.step_field_test(lab_id)
         if not self.step_reviewer(): return self.dsg
         return self.dsg
 

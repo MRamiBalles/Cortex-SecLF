@@ -43,6 +43,19 @@ class HiveVault:
             "aik_pub": "HIVE_ATTESTATION_IDENTITY_KEY_CERT_v1"
         }
 
+    def sign_proof(self, proof_id: str, payload: str) -> str:
+        """
+        Creates an HMAC-SHA256 signature for a ZKP proof.
+        Anchors the proof to the hardware vault key.
+        """
+        import hmac
+        signature = hmac.new(
+            self.vault_key.encode(),
+            f"{proof_id}:{payload}".encode(),
+            hashlib.sha256
+        ).hexdigest()
+        return signature
+
 hive_vault = HiveVault()
 
 import json # Late import to avoid top-level issues if needed, but standard is better
