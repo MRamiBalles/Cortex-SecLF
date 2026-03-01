@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 
 from ...rag_engine.retriever import retriever
 from ...dojo_ctrl.manager import dojo_manager
+from ...neuro_sim.mesh_bus import mesh_bus
+from ...neuro_sim.nodes import HIVE_NODES
 
 # Load environment variables from .env
 load_dotenv()
@@ -42,7 +44,7 @@ class HiveOrchestrator:
             self.sovereign_mock = True
 
         self.dsg = {
-            "version": "3.3",
+            "version": "4.0", # Enterprise Orchestration
             "project_id": None,
             "topic": None,
             "status": "IDLE",
@@ -50,7 +52,7 @@ class HiveOrchestrator:
                 "ideation": {"content": None, "grounding": [], "status": "PENDING"},
                 "realization": {"content": None, "trials": [], "status": "PENDING"},
                 "field_test": {"lab": None, "result": None, "status": "PENDING"},
-                "audit": {"score": 0, "verdict": None, "critique": None, "status": "PENDING"}
+                "audit": {"score": 0, "verdict": None, "critique": None, "status": "PENDING", "quorum": None}
             },
             "edges": ["ideation -> realization", "realization -> field_test", "field_test -> audit"]
         }
@@ -257,7 +259,6 @@ class HiveOrchestrator:
             return False
 
         # 2. Execute Realization (Targeting the Lab)
-        # We inject the access_url into the realization environment
         code = self.dsg["nodes"]["realization"]["content"]
         target_code = f"import os\nos.environ['TARGET_URL'] = '{lab_result['access_url']}'\n{code}"
         
@@ -274,7 +275,37 @@ class HiveOrchestrator:
         self.logger.info(f"FIELD TEST COMPLETE: Status={exec_result['exit_code']}")
         return True
 
-    def step_reviewer(self):
+    async def _collect_quorum(self, artifact_hash: str, timeout: float = 5.0) -> List[Dict[str, Any]]:
+        """
+        Broadcasts a promotion request and waits for HIVE nodes to sign it.
+        MAV (Multi-Agent Voting) Quorum logic.
+        """
+        signatures = []
+        
+        async def on_sig(msg):
+            if msg.get("block_hash") == artifact_hash:
+                signatures.append(msg)
+
+        # Temp subscription
+        mesh_bus.subscribe(on_sig)
+        
+        # Trigger signatures (Simulating nodes reviewing the code)
+        for node in HIVE_NODES:
+            sig = node.sign_block(artifact_hash)
+            sig["block_hash"] = artifact_hash
+            await mesh_bus.broadcast(sig)
+
+        start = time.time()
+        while len(signatures) < 2: # 2/3 Quorum
+            if time.time() - start > timeout:
+                break
+            await asyncio.sleep(0.1)
+        
+        # Filter unique (basic)
+        unique_sigs = {s["node_id"]: s for s in signatures}.values()
+        return list(unique_sigs)
+
+    async def step_reviewer(self):
         if self.dsg["nodes"]["realization"]["status"] != "COMPILED":
             return False
 
@@ -295,11 +326,24 @@ class HiveOrchestrator:
             "score": audit_data.get("score", 0),
             "verdict": audit_data.get("verdict", "REJECT"),
             "critique": audit_data.get("critique", "No critique provided"),
-            "status": "AUDITED"
+            "status": "AUDITED",
+            "quorum": "PENDING"
         }
         
         if audit_data.get("verdict") == "ACCEPT":
-            self.dsg["status"] = "COMPLETED"
+            # Initiate Quorum Promotion
+            artifact_hash = hashlib.sha256(self.dsg["nodes"]["realization"]["content"].encode()).hexdigest()
+            signatures = await self._collect_quorum(artifact_hash)
+            
+            if len(signatures) >= 2:
+                self.dsg["nodes"]["audit"]["quorum"] = "VERIFIED"
+                self.dsg["nodes"]["audit"]["signatures"] = signatures
+                self.dsg["status"] = "COMPLETED"
+                self.logger.info(f"QUORUM REACHED: Code {artifact_hash[:8]} promoted to STABLE.")
+            else:
+                self.dsg["nodes"]["audit"]["quorum"] = "FAILED"
+                self.dsg["status"] = "REJECTED_BY_QUORUM"
+                self.logger.warning(f"QUORUM FAILED: Consensus not reached for promotion.")
         else:
             self.dsg["status"] = "REJECTED_BY_PEER_REVIEW"
         return True

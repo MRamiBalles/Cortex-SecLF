@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import "./globals.css";
+import { RoleProvider } from "@/src/context/RoleContext";
+import RoleSwitcher from "@/src/components/RoleSwitcher";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -16,7 +17,14 @@ export default function RootLayout({
 }>) {
     return (
         <html lang="en" className="dark">
-            <body className={inter.className}>{children}</body>
+            <body className={inter.className}>
+                <RoleProvider>
+                    <div className="relative min-h-screen">
+                        {children}
+                        <RoleSwitcher />
+                    </div>
+                </RoleProvider>
+            </body>
         </html>
     );
 }
