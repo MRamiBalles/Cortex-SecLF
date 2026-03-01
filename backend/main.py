@@ -6,6 +6,7 @@ from app.api.lab import router as lab_router
 from app.api.neuro import router as neuro_router
 from app.api.scientist import router as scientist_router
 from app.api.bridge import router as bridge_router
+from app.api.containment import router as containment_router
 
 app = FastAPI(
     title="Cortex-Sec Local Forge",
@@ -37,6 +38,7 @@ app.include_router(neuro_router)
 app.include_router(scientist_router)
 app.include_router(dojo_router)
 app.include_router(bridge_router)
+app.include_router(containment_router)
 
 @app.get("/health")
 async def health_check():

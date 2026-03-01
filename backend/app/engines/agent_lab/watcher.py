@@ -4,6 +4,9 @@ import logging
 from typing import Dict, Any, List
 from docker.errors import DockerException, NotFound
 
+from ..policy_engine.engine import policy_engine
+from .incident_ledger import incident_ledger
+
 class ActiveWatcher:
     """
     Advanced Blue Team Agent. 
@@ -13,10 +16,6 @@ class ActiveWatcher:
         self.container_name = container_name
         self.logger = logging.getLogger("cslf.watcher")
         self.client = docker.from_env()
-        
-        # Policy: Forbidden Activity Patterns
-        self.forbidden_processes = ["nmap", "nc", "netcat", "socat", "scapy", "root"]
-        self.forbidden_files = ["/etc/shadow", "/etc/passwd", "/root/.ssh"]
 
     def get_container(self):
         try:
@@ -27,11 +26,9 @@ class ActiveWatcher:
     def inspect_network(self, container) -> List[str]:
         """Detects active TCP/UDP connections inside the jail."""
         try:
-            # -t: tcp, -u: udp, -n: numeric, -p: show process
             res = container.exec_run("ss -tunp")
             output = res.output.decode('utf-8').strip()
-            # Filter for established or suspicious connections
-            return [line for line in output.split('\n') if "ESTAB" in line or "127.0.0.1" not in line]
+            return [line for line in output.split('\n') if "ESTAB" in line]
         except:
             return []
 
@@ -44,56 +41,67 @@ class ActiveWatcher:
         except:
             return []
 
-    def trigger_kill_switch(self, container, reason: str, evidence: Any):
+    def trigger_kill_switch(self, container, reason: str, evidence: str):
         """Immmediate isolation and memory freeze."""
-        self.logger.critical(f"🚨 ACTIVE THREAT NEUTRALIZED | {reason}")
+        policy = policy_engine.current_policy_name
+        self.logger.critical(f"🚨 ACTIVE THREAT NEUTRALIZED | Policy: {policy} | {reason}")
+        
+        action = "KILLED"
         try:
-            container.pause()
-            status = "FROZEN"
+            if policy_engine.get_current_policy()["auto_kill"]:
+                container.kill()
+                action = "KILLED"
+            else:
+                container.pause()
+                action = "PAUSED"
         except:
-            container.kill()
-            status = "KILLED"
+            pass
 
-        report = {
+        incident_ledger.log_incident(
+            agent_id=self.container_name,
+            policy=policy,
+            breach_type=reason,
+            evidence=evidence,
+            action=action
+        )
+        
+        return {
             "timestamp": time.time(),
             "reason": reason,
             "evidence": evidence,
-            "status": status,
-            "containment_type": "L1_ISOLATION"
+            "status": action,
+            "policy": policy
         }
-        # In production, persist this to a database
-        return report
 
     def monitor_cycle(self) -> Dict[str, Any]:
         """
-        Executes a deep inspection cycle. 
-        Moving beyond logs into actual system state.
+        Executes a deep inspection cycle based on active policy.
         """
         container = self.get_container()
         if not container:
             return {"status": "error", "msg": "Target container dormant."}
 
+        policy = policy_engine.get_current_policy()
+
         # 1. Inspect Network Layer
         connections = self.inspect_network(container)
         for conn in connections:
-            if "ESTAB" in conn: # Any established connection in a jail is a violation
-                return self.trigger_kill_switch(container, "Unsanctioned Out-of-Bounds Connection", conn)
+            # Simple check: any connection established is a breach if not permissive
+            if policy["forbidden_network"] or policy["isolation_level"] == "MAX":
+                 return self.trigger_kill_switch(container, "Unsanctioned Out-of-Bounds Connection", conn)
 
         # 2. Inspect Process Layer
         processes = self.inspect_processes(container)
         for ps in processes:
-            for forbidden in self.forbidden_processes:
+            for forbidden in policy["forbidden_processes"]:
                 if forbidden in ps.lower():
                     return self.trigger_kill_switch(container, f"Unauthorized Process Activity: {forbidden}", ps)
-
-        # 3. Log Stream (Legacy but kept for context)
-        # We can't block here in a real loop, so we'd typically use a background thread 
-        # or grab recent chunks. For this PoC, we assume success if no violations found.
         
         return {
             "status": "watching",
+            "active_policy": policy_engine.current_policy_name,
             "active_processes": len(processes),
-            "network_status": "isolated" if not connections else "BREACH_ATTEMPT"
+            "threat_level": "ZERO" if not connections else "ELEVEATED"
         }
 
     def reset_lab(self):
@@ -101,7 +109,8 @@ class ActiveWatcher:
         if container:
             try: container.unpause()
             except: pass
-            container.restart()
+            try: container.restart()
+            except: pass
             return {"status": "ready", "msg": "Sandbox environment recycled."}
         return {"status": "error", "msg": "Hardware link lost."}
 

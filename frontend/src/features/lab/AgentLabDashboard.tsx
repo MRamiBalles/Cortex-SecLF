@@ -252,7 +252,18 @@ ${report.logs.join('\n')}
                     </Card>
                 </div>
 
+                {/* CONTAINMENT & POLICY ENGINE */}
+                <div className="mt-8 border-t border-neutral-900 pt-8">
+                    <h3 className="text-xl font-black text-red-500 mb-6 flex items-center gap-2">
+                        <ShieldAlert size={24} /> ACTIVE CONTAINMENT ORCHESTRATOR
+                    </h3>
+                    <ContainmentDashboard />
+                </div>
+
             </div>
         </div>
     )
 }
+
+import ContainmentDashboard from './ContainmentDashboard'
+import { ShieldAlert } from 'lucide-react'
